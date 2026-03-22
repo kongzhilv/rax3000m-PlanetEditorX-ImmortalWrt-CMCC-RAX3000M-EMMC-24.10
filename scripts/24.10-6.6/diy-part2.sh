@@ -33,6 +33,24 @@ echo "CONFIG_PACKAGE_luci-i18n-wechatpush-zh-cn=y" >> .config
 echo "CONFIG_PACKAGE_adguardhome=y" >>.config 
 echo "CONFIG_PACKAGE_luci-app-adguardhome=y" >>.config 
 
+# 添加 USB 基础驱动（必须先有这个才能支持网卡）
+echo "CONFIG_PACKAGE_kmod-usb-core=y" >> .config
+echo "CONFIG_PACKAGE_kmod-usb3=y" >> .config
+
+# 添加 USB 有线网卡驱动
+echo "CONFIG_PACKAGE_kmod-usb-net=y" >> .config
+echo "CONFIG_PACKAGE_kmod-usb-net-rtl8152=y" >> .config
+echo "CONFIG_PACKAGE_kmod-usb-net-asix-ax88179=y" >> .config
+echo "CONFIG_PACKAGE_kmod-usb-net-asix=y" >> .config
+
+# 添加手机 USB 共享网络支持 (RNDIS)
+echo "CONFIG_PACKAGE_kmod-usb-net-rndis=y" >> .config
+echo "CONFIG_PACKAGE_kmod-usb-net-cdc-ether=y" >> .config
+
+# (可选) 如果你用了 4G/5G 模块，建议加上
+echo "CONFIG_PACKAGE_kmod-usb-net-huawei-cdc-ncm=y" >> .config
+echo "CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y" >> .config
+
 ##删除同名软件包：
 # rm -rf feeds/packages/net/adguardhome
 
