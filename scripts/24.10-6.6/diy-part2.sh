@@ -78,3 +78,6 @@ fi
 # 方案：通过修改 patch-kernel.sh，阻止它在打补丁后误删或校验 orig 文件
 sed -i 's/--no-backup-if-mismatch/--no-backup-if-mismatch --no-remove-empty-files/g' scripts/patch-kernel.sh || true
 sed -i 's/find "$1" -type f -name "\\*.orig" -exec rm -f {} \\;/echo "skip rm orig files"/g' scripts/patch-kernel.sh || true
+
+# 修复 Rust 1.87 编译报错：禁止从官方 CI 下载已经失效的 LLVM
+sed -i 's/download-ci-llvm = true/download-ci-llvm = false/g' feeds/packages/lang/rust/Makefile
