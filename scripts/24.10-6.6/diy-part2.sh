@@ -73,3 +73,8 @@ else
   echo "错误：$EEPROM_FILE 不存在，无法创建符号链接"
   exit 1
 fi
+
+# 修复 Rust 1.90.0 编译时 Cargo.toml.orig 丢失的问题
+# 方案：通过修改 patch-kernel.sh，阻止它在打补丁后误删或校验 orig 文件
+sed -i 's/--no-backup-if-mismatch/--no-backup-if-mismatch --no-remove-empty-files/g' scripts/patch-kernel.sh || true
+sed -i 's/find "$1" -type f -name "\\*.orig" -exec rm -f {} \\;/echo "skip rm orig files"/g' scripts/patch-kernel.sh || true
