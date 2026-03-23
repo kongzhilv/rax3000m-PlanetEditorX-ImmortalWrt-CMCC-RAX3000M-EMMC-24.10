@@ -74,10 +74,14 @@ else
   exit 1
 fi
 
-# 修复 Rust 1.90.0 编译时 Cargo.toml.orig 丢失的问题
-# 方案：通过修改 patch-kernel.sh，阻止它在打补丁后误删或校验 orig 文件
-sed -i 's/--no-backup-if-mismatch/--no-backup-if-mismatch --no-remove-empty-files/g' scripts/patch-kernel.sh || true
-sed -i 's/find "$1" -type f -name "\\*.orig" -exec rm -f {} \\;/echo "skip rm orig files"/g' scripts/patch-kernel.sh || true
+# 3. 环境修复：修复 Rust 编译时 Cargo.toml.orig 丢失的 Bug
+sed -i 's/find "$1" -type f -name "\\*.orig" -exec rm -f {} \\;/find "$1" -type f -name "\\*.orig" -a ! -name "Cargo.toml.orig" -exec rm -f {} \\;/g' scripts/patch-kernel.sh || true
 
-# 修复 Rust 1.87 编译报错：禁止从官方 CI 下载已经失效的 LLVM
-sed -i 's/download-ci-llvm = true/download-ci-llvm = false/g' feeds/packages/lang/rust/Makefile
+# 4. 环境终极修复：彻底解决 Rust LLVM 404 下载报错 (全方位拦截)
+# (A) 直接从 OpenWrt 主配置文件中强制移除 CI 下载功能（最有效）
+echo "# CONFIG_RUST_DOWNLOAD_CI_LLVM is not set" >> .config
+# (B) 暴力拦截 Makefile 中的动态变量生成规则
+sed -i 's/download-ci-llvm.*/download-ci-llvm = false/g' feeds/packages/lang/rust/Makefile || true
+# (C) 扫荡所有可能存在的 toml 模板文件
+find feeds/packages/lang/rust/ -type f -name "*.toml" -exec sed -i 's/download-ci-llvm.*/download-ci-llvm = false/g' {} + || true
+# ==========================================
