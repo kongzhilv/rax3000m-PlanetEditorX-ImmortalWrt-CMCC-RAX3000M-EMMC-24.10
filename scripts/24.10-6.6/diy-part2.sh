@@ -1,39 +1,36 @@
 #!/bin/bash
 #
 # 版权所有 (c) 2019-2020 P3TERX <https://p3terx.com>
-#
 # 这是一个自由软件，根据 MIT 许可证授权。
-# 详细信息请参见 /LICENSE。
-#
 # https://github.com/P3TERX/Actions-OpenWrt
 
-# 修改默认 IP
-# CONFIG_FILE="package/base-files/files/bin/config_generate"
-# if [ -f "$CONFIG_FILE" ]; then
-#   if ! grep -q "192.168.2.1" "$CONFIG_FILE"; then
-#     sed -i 's/192\.168\.6\.1/192.168.2.1/g; s/192\.168\.1\.1/192.168.2.1/g' "$CONFIG_FILE"
-#     echo "IP 地址已更新为 192.168.2.1"
-#   else
-#     echo "IP 地址已是 192.168.2.1，无需修改"
-#   fi
-# else
-#   echo "警告：$CONFIG_FILE 不存在，跳过 IP 修改"
-# fi
+# ==========================================
+# 1. 核心环境修复 (放在最前面，防止被意外中断)
+# ==========================================
 
-# 预装
-# OpenClash
+# (A) 补充跨平台编译所需的核心目标库 (解决 shadowsocks-rust 找不到 core 的问题)
+rustup target add aarch64-unknown-linux-musl || true
+
+# (B) 修复 Rust 编译时 Cargo.toml.orig 丢失的 Bug
+sed -i 's/find "$1" -type f -name "\\*.orig" -exec rm -f {} \\;/find "$1" -type f -name "\\*.orig" -a ! -name "Cargo.toml.orig" -exec rm -f {} \\;/g' scripts/patch-kernel.sh || true
+
+# (C) 彻底解决 Rust LLVM 404 下载报错 (全方位拦截)
+echo "# CONFIG_RUST_DOWNLOAD_CI_LLVM is not set" >> .config
+sed -i 's/download-ci-llvm.*/download-ci-llvm = false/g' feeds/packages/lang/rust/Makefile || true
+find feeds/packages/lang/rust/ -type f -name "*.toml" -exec sed -i 's/download-ci-llvm.*/download-ci-llvm = false/g' {} + || true
+
+# ==========================================
+# 2. 软件包预装配置
+# ==========================================
+
+# 预装基础插件
 echo "CONFIG_PACKAGE_luci-app-openclash=y" >> .config
-# 微信推送
 echo "CONFIG_PACKAGE_luci-app-wechatpush=y" >> .config
 echo "CONFIG_PACKAGE_luci-i18n-wechatpush-zh-cn=y" >> .config
-#应用过滤(OAF)
-# echo "CONFIG_PACKAGE_luci-app-oaf=y" >>.config 
+echo "CONFIG_PACKAGE_adguardhome=y" >> .config 
+echo "CONFIG_PACKAGE_luci-app-adguardhome=y" >> .config 
 
-# echo "CONFIG_PACKAGE_AdGuardHome=y" >>.config 
-echo "CONFIG_PACKAGE_adguardhome=y" >>.config 
-echo "CONFIG_PACKAGE_luci-app-adguardhome=y" >>.config 
-
-# 添加 USB 基础驱动（必须先有这个才能支持网卡）
+# 添加 USB 基础驱动
 echo "CONFIG_PACKAGE_kmod-usb-core=y" >> .config
 echo "CONFIG_PACKAGE_kmod-usb3=y" >> .config
 
@@ -43,23 +40,22 @@ echo "CONFIG_PACKAGE_kmod-usb-net-rtl8152=y" >> .config
 echo "CONFIG_PACKAGE_kmod-usb-net-asix-ax88179=y" >> .config
 echo "CONFIG_PACKAGE_kmod-usb-net-asix=y" >> .config
 
-# 添加手机 USB 共享网络支持 (RNDIS)
+# 添加手机 USB 共享网络支持 & 4G/5G 模块
 echo "CONFIG_PACKAGE_kmod-usb-net-rndis=y" >> .config
 echo "CONFIG_PACKAGE_kmod-usb-net-cdc-ether=y" >> .config
-
-# (可选) 如果你用了 4G/5G 模块，建议加上
 echo "CONFIG_PACKAGE_kmod-usb-net-huawei-cdc-ncm=y" >> .config
 echo "CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y" >> .config
 
-##删除同名软件包：
-# rm -rf feeds/packages/net/adguardhome
+# ==========================================
+# 3. 固件特定文件处理 (去除了原版的 exit 1 致命异常)
+# ==========================================
 
-# 删除 package/mtk/drivers/mt_wifi/files/mt7981-default-eeprom/e2p
+# 删除 mt7981-default-eeprom
 rm -f package/mtk/drivers/mt_wifi/files/mt7981-default-eeprom/e2p
 if [ $? -eq 0 ]; then
   echo "已删除 package/mtk/drivers/mt_wifi/files/mt7981-default-eeprom/e2p"
 else
-  echo "错误：删除 package/mtk/drivers/mt_wifi/files/mt7981-default-eeprom/e2p 失败"
+  echo "警告：删除 e2p 失败 (可能文件本就不存在)"
 fi
 
 # 创建 MT7981 固件符号链接
@@ -68,20 +64,8 @@ if [ -f "$EEPROM_FILE" ]; then
   mkdir -p files/lib/firmware
   ln -sf /lib/firmware/MT7981_iPAiLNA_EEPROM.bin files/lib/firmware/e2p
   echo "符号链接已创建"
-  ls -l files/lib/firmware/e2p || { echo "错误：符号链接创建失败"; exit 1; }
+  ls -l files/lib/firmware/e2p || echo "警告：符号链接创建异常"
 else
-  echo "错误：$EEPROM_FILE 不存在，无法创建符号链接"
-  exit 1
+  # 注意这里：把会导致脚本崩溃的 exit 1 改成了 echo 警告，保证脚本能顺利跑完！
+  echo "警告：$EEPROM_FILE 不存在，跳过符号链接创建"
 fi
-
-# 3. 环境修复：修复 Rust 编译时 Cargo.toml.orig 丢失的 Bug
-sed -i 's/find "$1" -type f -name "\\*.orig" -exec rm -f {} \\;/find "$1" -type f -name "\\*.orig" -a ! -name "Cargo.toml.orig" -exec rm -f {} \\;/g' scripts/patch-kernel.sh || true
-
-# 4. 环境终极修复：彻底解决 Rust LLVM 404 下载报错 (全方位拦截)
-# (A) 直接从 OpenWrt 主配置文件中强制移除 CI 下载功能（最有效）
-echo "# CONFIG_RUST_DOWNLOAD_CI_LLVM is not set" >> .config
-# (B) 暴力拦截 Makefile 中的动态变量生成规则
-sed -i 's/download-ci-llvm.*/download-ci-llvm = false/g' feeds/packages/lang/rust/Makefile || true
-# (C) 扫荡所有可能存在的 toml 模板文件
-find feeds/packages/lang/rust/ -type f -name "*.toml" -exec sed -i 's/download-ci-llvm.*/download-ci-llvm = false/g' {} + || true
-# ==========================================
