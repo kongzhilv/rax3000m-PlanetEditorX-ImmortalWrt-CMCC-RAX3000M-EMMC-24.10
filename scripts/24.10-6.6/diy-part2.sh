@@ -5,24 +5,23 @@
 # https://github.com/P3TERX/Actions-OpenWrt
 
 # ==========================================
-# 1. 核心环境修复 (放在最前面，防止被意外中断)
+# 1. 核心环境修复 (跨平台编译与上游 Bug 修复)
 # ==========================================
-
-# (A) 补充跨平台编译所需的核心目标库 (解决 shadowsocks-rust 找不到 core 的问题)
+# 补充跨平台编译所需的核心目标库 (解决 shadowsocks-rust 等找不到 core 的问题)
 rustup target add aarch64-unknown-linux-musl || true
 
-# (B) 修复 Rust 编译时 Cargo.toml.orig 丢失的 Bug
+# 修复 Rust 编译时 Cargo.toml.orig 丢失的 Bug
 sed -i 's/find "$1" -type f -name "\\*.orig" -exec rm -f {} \\;/find "$1" -type f -name "\\*.orig" -a ! -name "Cargo.toml.orig" -exec rm -f {} \\;/g' scripts/patch-kernel.sh || true
 
-# (C) 彻底解决 Rust LLVM 404 下载报错 (全方位拦截)
+# 彻底解决 Rust LLVM 404 下载报错 (全方位拦截)
 echo "# CONFIG_RUST_DOWNLOAD_CI_LLVM is not set" >> .config
 sed -i 's/download-ci-llvm.*/download-ci-llvm = false/g' feeds/packages/lang/rust/Makefile || true
 find feeds/packages/lang/rust/ -type f -name "*.toml" -exec sed -i 's/download-ci-llvm.*/download-ci-llvm = false/g' {} + || true
 
+
 # ==========================================
 # 2. 软件包预装配置
 # ==========================================
-
 # 预装基础插件
 echo "CONFIG_PACKAGE_luci-app-openclash=y" >> .config
 echo "CONFIG_PACKAGE_luci-app-wechatpush=y" >> .config
@@ -46,26 +45,74 @@ echo "CONFIG_PACKAGE_kmod-usb-net-cdc-ether=y" >> .config
 echo "CONFIG_PACKAGE_kmod-usb-net-huawei-cdc-ncm=y" >> .config
 echo "CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y" >> .config
 
-# ==========================================
-# 3. 固件特定文件处理 (去除了原版的 exit 1 致命异常)
-# ==========================================
 
-# 删除 mt7981-default-eeprom
+# ==========================================
+# 3. 固件特定文件处理 (去除了会导致报错中断的 exit 1)
+# ==========================================
 rm -f package/mtk/drivers/mt_wifi/files/mt7981-default-eeprom/e2p
 if [ $? -eq 0 ]; then
-  echo "已删除 package/mtk/drivers/mt_wifi/files/mt7981-default-eeprom/e2p"
-else
-  echo "警告：删除 e2p 失败 (可能文件本就不存在)"
+  echo "已删除 mt7981-default-eeprom/e2p"
 fi
 
-# 创建 MT7981 固件符号链接
 EEPROM_FILE="package/mtk/drivers/mt_wifi/files/mt7981-default-eeprom/MT7981_iPAiLNA_EEPROM.bin"
 if [ -f "$EEPROM_FILE" ]; then
   mkdir -p files/lib/firmware
   ln -sf /lib/firmware/MT7981_iPAiLNA_EEPROM.bin files/lib/firmware/e2p
   echo "符号链接已创建"
-  ls -l files/lib/firmware/e2p || echo "警告：符号链接创建异常"
 else
-  # 注意这里：把会导致脚本崩溃的 exit 1 改成了 echo 警告，保证脚本能顺利跑完！
   echo "警告：$EEPROM_FILE 不存在，跳过符号链接创建"
 fi
+
+
+# ==========================================
+# 4. 高泛用性修复：防火墙 wan 区域显示为“空”
+# ==========================================
+mkdir -p package/base-files/files/etc/uci-defaults
+cat <<EOF > package/base-files/files/etc/uci-defaults/99-fix-firewall-wan
+#!/bin/sh
+for i in \$(seq 0 10); do
+    zone_name=\$(uci -q get firewall.@zone[\$i].name)
+    if [ "\$zone_name" = "wan" ]; then
+        uci -q set firewall.@zone[\$i].network='wan wan6'
+        uci commit firewall
+        break
+    fi
+done
+exit 0
+EOF
+
+
+# ==========================================
+# 5. 终极泛用性修复：5G/USB IPv6 中继自愈守护脚本
+# ==========================================
+mkdir -p package/base-files/files/etc/hotplug.d/iface
+cat <<'EOF' > package/base-files/files/etc/hotplug.d/iface/98-5g-ipv6-guardian
+#!/bin/sh
+[ "$ACTION" = "ifup" ] || exit 0
+
+dev_prefix=$(echo "$DEVICE" | grep -o '^[a-zA-Z]*')
+
+case "$dev_prefix" in
+    usb|wwan|rmnet|modem)
+        proto=$(uci -q get network."$INTERFACE".proto)
+        reqprefix=$(uci -q get network."$INTERFACE".reqprefix)
+        
+        if [ "$proto" = "dhcpv6" ] && [ "$reqprefix" != "disabled" ]; then
+            logger -t "IPv6-Guardian" "检测到移动网络/USB接口 $INTERFACE 请求前缀，执行防死锁纠正..."
+            uci set network."$INTERFACE".reqprefix='disabled'
+            uci commit network
+            
+            ifdown "$INTERFACE"
+            sleep 2
+            ifup "$INTERFACE"
+            exit 0
+        fi
+
+        logger -t "IPv6-Guardian" "刷新 odhcpd 中继服务以适配 $INTERFACE..."
+        sleep 5
+        /etc/init.d/odhcpd restart
+        ;;
+esac
+exit 0
+EOF
+chmod +x package/base-files/files/etc/hotplug.d/iface/98-5g-ipv6-guardian
