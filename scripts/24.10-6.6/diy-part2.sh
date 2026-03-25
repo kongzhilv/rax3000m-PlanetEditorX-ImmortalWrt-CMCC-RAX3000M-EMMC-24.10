@@ -116,3 +116,6 @@ esac
 exit 0
 EOF
 chmod +x package/base-files/files/etc/hotplug.d/iface/98-5g-ipv6-guardian
+
+# 6. 规避上游 docker-compose 编译报错 (该包目前存在 Go 依赖 Bug)
+sed -i 's/CONFIG_PACKAGE_docker-compose=y/# CONFIG_PACKAGE_docker-compose is not set/' .config || true 
