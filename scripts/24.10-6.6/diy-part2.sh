@@ -118,20 +118,26 @@ EOF
 chmod +x package/base-files/files/etc/hotplug.d/iface/98-5g-ipv6-guardian
 
 # ==========================================
-# 6. 终极修复：物理毁灭 docker-compose 源码，直接注入官方二进制程序
+# 6. 终极修复：物理毁灭存在 Go 编译 Bug 的累赘源码
 # ==========================================
-# (A) 物理级毁灭：直接删除存在 Bug 的源码包文件夹，让编译系统彻底找不到它！
+# (A) 物理级毁灭：直接删除这些报错包的源码文件夹，让编译系统彻底找不到它！
 rm -rf feeds/packages/utils/docker-compose
+rm -rf feeds/packages/utils/filebrowser
+rm -rf feeds/luci/applications/luci-app-filebrowser
 
-# (B) 暴力清除 .config 中的所有残留配置项 (无视任何 Windows 换行符)
+# (B) 暴力清除 .config 中的所有残留配置项 (防止依赖链死锁，无视 Windows 换行符)
 sed -i '/docker-compose/d' .config || true
+sed -i '/filebrowser/d' .config || true
+
 echo "# CONFIG_PACKAGE_docker-compose is not set" >> .config
 echo "# CONFIG_PACKAGE_luci-app-docker-compose is not set" >> .config
+echo "# CONFIG_PACKAGE_filebrowser is not set" >> .config
+echo "# CONFIG_PACKAGE_luci-app-filebrowser is not set" >> .config
 
 # (C) 建立固件的本地文件挂载点
 mkdir -p files/usr/bin
 
-# (D) 直接从 Docker 官方拉取完美适配 RAX3000M (ARM64) 架构的预编译程序
+# (D) 直接从 Docker 官方拉取完美适配 RAX3000M (ARM64) 架构的 docker-compose 二进制程序
 echo "正在下载官方 docker-compose 二进制文件..."
 curl -L https://github.com/docker/compose/releases/latest/download/docker-compose-linux-aarch64 -o files/usr/bin/docker-compose
 
