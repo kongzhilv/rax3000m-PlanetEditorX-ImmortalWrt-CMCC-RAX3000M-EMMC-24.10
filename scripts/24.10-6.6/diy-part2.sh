@@ -7,47 +7,35 @@
 # ==========================================
 # 1. 核心环境修复 (跨平台编译与上游 Bug 修复)
 # ==========================================
-# 补充跨平台编译所需的核心目标库 (解决 shadowsocks-rust 等找不到 core 的问题)
 rustup target add aarch64-unknown-linux-musl || true
-
-# 修复 Rust 编译时 Cargo.toml.orig 丢失的 Bug
 sed -i 's/find "$1" -type f -name "\\*.orig" -exec rm -f {} \\;/find "$1" -type f -name "\\*.orig" -a ! -name "Cargo.toml.orig" -exec rm -f {} \\;/g' scripts/patch-kernel.sh || true
-
-# 彻底解决 Rust LLVM 404 下载报错 (全方位拦截)
 echo "# CONFIG_RUST_DOWNLOAD_CI_LLVM is not set" >> .config
 sed -i 's/download-ci-llvm.*/download-ci-llvm = false/g' feeds/packages/lang/rust/Makefile || true
 find feeds/packages/lang/rust/ -type f -name "*.toml" -exec sed -i 's/download-ci-llvm.*/download-ci-llvm = false/g' {} + || true
 
-
 # ==========================================
-# 2. 软件包预装配置
+# 2. 软件包预装配置 (你的核心需求)
 # ==========================================
-# 预装基础插件
 echo "CONFIG_PACKAGE_luci-app-openclash=y" >> .config
 echo "CONFIG_PACKAGE_luci-app-wechatpush=y" >> .config
 echo "CONFIG_PACKAGE_luci-i18n-wechatpush-zh-cn=y" >> .config
 echo "CONFIG_PACKAGE_adguardhome=y" >> .config 
 echo "CONFIG_PACKAGE_luci-app-adguardhome=y" >> .config 
 
-# 添加 USB 基础驱动
+# USB 基础驱动与 5G/4G 上网卡驱动
 echo "CONFIG_PACKAGE_kmod-usb-core=y" >> .config
 echo "CONFIG_PACKAGE_kmod-usb3=y" >> .config
-
-# 添加 USB 有线网卡驱动
 echo "CONFIG_PACKAGE_kmod-usb-net=y" >> .config
 echo "CONFIG_PACKAGE_kmod-usb-net-rtl8152=y" >> .config
 echo "CONFIG_PACKAGE_kmod-usb-net-asix-ax88179=y" >> .config
 echo "CONFIG_PACKAGE_kmod-usb-net-asix=y" >> .config
-
-# 添加手机 USB 共享网络支持 & 4G/5G 模块
 echo "CONFIG_PACKAGE_kmod-usb-net-rndis=y" >> .config
 echo "CONFIG_PACKAGE_kmod-usb-net-cdc-ether=y" >> .config
 echo "CONFIG_PACKAGE_kmod-usb-net-huawei-cdc-ncm=y" >> .config
 echo "CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y" >> .config
 
-
 # ==========================================
-# 3. 固件特定文件处理 (去除了会导致报错中断的 exit 1)
+# 3. 固件特定文件处理 (防崩溃版)
 # ==========================================
 rm -f package/mtk/drivers/mt_wifi/files/mt7981-default-eeprom/e2p
 if [ $? -eq 0 ]; then
@@ -62,7 +50,6 @@ if [ -f "$EEPROM_FILE" ]; then
 else
   echo "警告：$EEPROM_FILE 不存在，跳过符号链接创建"
 fi
-
 
 # ==========================================
 # 4. 高泛用性修复：防火墙 wan 区域显示为“空”
@@ -80,7 +67,6 @@ for i in \$(seq 0 10); do
 done
 exit 0
 EOF
-
 
 # ==========================================
 # 5. 终极泛用性修复：5G/USB IPv6 中继自愈守护脚本
@@ -118,29 +104,37 @@ EOF
 chmod +x package/base-files/files/etc/hotplug.d/iface/98-5g-ipv6-guardian
 
 # ==========================================
-# 6. 终极修复：物理毁灭存在 Go 编译 Bug 的累赘源码
+# 6. 【全面清扫】物理毁灭所有近期损坏的 Go/Rust 边缘插件
 # ==========================================
-# (A) 物理级毁灭：直接删除这些报错包的源码文件夹，让编译系统彻底找不到它！
+echo "开始清理上游损坏的插件源码..."
 rm -rf feeds/packages/utils/docker-compose
 rm -rf feeds/packages/utils/filebrowser
 rm -rf feeds/luci/applications/luci-app-filebrowser
+rm -rf feeds/packages/net/sing-box
+rm -rf feeds/luci/applications/luci-app-sing-box
+rm -rf feeds/packages/net/rustdesk-server
+rm -rf feeds/luci/applications/luci-app-rustdesk-server
 
-# (B) 暴力清除 .config 中的所有残留配置项 (防止依赖链死锁，无视 Windows 换行符)
+# 暴力清除 .config 中的配置残留
 sed -i '/docker-compose/d' .config || true
 sed -i '/filebrowser/d' .config || true
+sed -i '/sing-box/d' .config || true
+sed -i '/rustdesk/d' .config || true
 
 echo "# CONFIG_PACKAGE_docker-compose is not set" >> .config
 echo "# CONFIG_PACKAGE_luci-app-docker-compose is not set" >> .config
 echo "# CONFIG_PACKAGE_filebrowser is not set" >> .config
 echo "# CONFIG_PACKAGE_luci-app-filebrowser is not set" >> .config
+echo "# CONFIG_PACKAGE_sing-box is not set" >> .config
+echo "# CONFIG_PACKAGE_luci-app-sing-box is not set" >> .config
+echo "# CONFIG_PACKAGE_rustdesk-server is not set" >> .config
+echo "# CONFIG_PACKAGE_luci-app-rustdesk-server is not set" >> .config
 
-# (C) 建立固件的本地文件挂载点
+# 建立固件的本地文件挂载点
 mkdir -p files/usr/bin
 
-# (D) 直接从 Docker 官方拉取完美适配 RAX3000M (ARM64) 架构的 docker-compose 二进制程序
+# 保留 docker-compose 的官方二进制版注入 (不参与源码编译，完美避开 Bug)
 echo "正在下载官方 docker-compose 二进制文件..."
 curl -L https://github.com/docker/compose/releases/latest/download/docker-compose-linux-aarch64 -o files/usr/bin/docker-compose
-
-# (E) 赋予执行权限，开机后即可直接在命令行输入 docker-compose 使用
 chmod +x files/usr/bin/docker-compose
 # ==========================================
