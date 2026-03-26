@@ -118,18 +118,23 @@ EOF
 chmod +x package/base-files/files/etc/hotplug.d/iface/98-5g-ipv6-guardian
 
 # ==========================================
-# 6. 终极修复：绕过 docker-compose 源码编译 Bug，直接注入官方二进制程序
+# 6. 终极修复：物理毁灭 docker-compose 源码，直接注入官方二进制程序
 # ==========================================
-# (A) 从编译清单中剔除存在源码依赖 Bug 的 docker-compose 包，阻止它去送死
-sed -i 's/CONFIG_PACKAGE_docker-compose=y/# CONFIG_PACKAGE_docker-compose is not set/' .config || true
+# (A) 物理级毁灭：直接删除存在 Bug 的源码包文件夹，让编译系统彻底找不到它！
+rm -rf feeds/packages/utils/docker-compose
 
-# (B) 建立固件的本地文件挂载点
+# (B) 暴力清除 .config 中的所有残留配置项 (无视任何 Windows 换行符)
+sed -i '/docker-compose/d' .config || true
+echo "# CONFIG_PACKAGE_docker-compose is not set" >> .config
+echo "# CONFIG_PACKAGE_luci-app-docker-compose is not set" >> .config
+
+# (C) 建立固件的本地文件挂载点
 mkdir -p files/usr/bin
 
-# (C) 直接从 Docker 官方拉取完美适配 RAX3000M (ARM64) 架构的预编译程序
+# (D) 直接从 Docker 官方拉取完美适配 RAX3000M (ARM64) 架构的预编译程序
 echo "正在下载官方 docker-compose 二进制文件..."
 curl -L https://github.com/docker/compose/releases/latest/download/docker-compose-linux-aarch64 -o files/usr/bin/docker-compose
 
-# (D) 赋予执行权限，固件刷入后即可直接在命令行输入 docker-compose 使用
+# (E) 赋予执行权限，开机后即可直接在命令行输入 docker-compose 使用
 chmod +x files/usr/bin/docker-compose
 # ==========================================
