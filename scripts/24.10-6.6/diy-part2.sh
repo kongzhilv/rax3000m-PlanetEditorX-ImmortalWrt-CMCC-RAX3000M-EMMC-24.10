@@ -117,5 +117,19 @@ exit 0
 EOF
 chmod +x package/base-files/files/etc/hotplug.d/iface/98-5g-ipv6-guardian
 
-# 6. 规避上游 docker-compose 编译报错 (该包目前存在 Go 依赖 Bug)
-sed -i 's/CONFIG_PACKAGE_docker-compose=y/# CONFIG_PACKAGE_docker-compose is not set/' .config || true 
+# ==========================================
+# 6. 终极修复：绕过 docker-compose 源码编译 Bug，直接注入官方二进制程序
+# ==========================================
+# (A) 从编译清单中剔除存在源码依赖 Bug 的 docker-compose 包，阻止它去送死
+sed -i 's/CONFIG_PACKAGE_docker-compose=y/# CONFIG_PACKAGE_docker-compose is not set/' .config || true
+
+# (B) 建立固件的本地文件挂载点
+mkdir -p files/usr/bin
+
+# (C) 直接从 Docker 官方拉取完美适配 RAX3000M (ARM64) 架构的预编译程序
+echo "正在下载官方 docker-compose 二进制文件..."
+curl -L https://github.com/docker/compose/releases/latest/download/docker-compose-linux-aarch64 -o files/usr/bin/docker-compose
+
+# (D) 赋予执行权限，固件刷入后即可直接在命令行输入 docker-compose 使用
+chmod +x files/usr/bin/docker-compose
+# ==========================================
