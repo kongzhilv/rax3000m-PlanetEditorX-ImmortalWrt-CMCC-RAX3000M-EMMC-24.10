@@ -5,10 +5,13 @@
 # https://github.com/P3TERX/Actions-OpenWrt
 
 # ==========================================
-# 1. 核心环境修复
+# 1. 核心环境修复 (Rust 跨平台目标及 LLVM 修复)
 # ==========================================
 rustup target add aarch64-unknown-linux-musl || true
 sed -i 's/find "$1" -type f -name "\\*.orig" -exec rm -f {} \\;/find "$1" -type f -name "\\*.orig" -a ! -name "Cargo.toml.orig" -exec rm -f {} \\;/g' scripts/patch-kernel.sh || true
+echo "# CONFIG_RUST_DOWNLOAD_CI_LLVM is not set" >> .config
+sed -i 's/download-ci-llvm.*/download-ci-llvm = false/g' feeds/packages/lang/rust/Makefile || true
+find feeds/packages/lang/rust/ -type f -name "*.toml" -exec sed -i 's/download-ci-llvm.*/download-ci-llvm = false/g' {} + || true
 
 # ==========================================
 # 2. 软件包预装配置
@@ -101,38 +104,18 @@ EOF
 chmod +x package/base-files/files/etc/hotplug.d/iface/98-5g-ipv6-guardian
 
 # ==========================================
-# 6. 源码级修复：解决 Go 语言包依赖缺失导致编译失败
+# 6. 【核心方案】Go 编译器源码级动态依赖修复
 # ==========================================
-echo "开始从 ImmortalWrt Master 分支同步最新源码以修复编译报错..."
+echo "正在注入 Go 编译器动态修复逻辑..."
 
-# 克隆主干仓库以获取已修复的包
-git clone -b master --depth 1 https://github.com/immortalwrt/packages.git /tmp/im_packages
+# (A) 解除断网编译限制，切换为国内代理加速
+find feeds/ -type f -name "golang-values.mk" -exec sed -i 's/GOPROXY=off/GOPROXY=https:\/\/goproxy.cn,direct/g' {} +
 
-# 定义需要进行热修复的组件
-RESCUE_PACKAGES="docker-compose filebrowser sing-box geoview rustdesk-server golang rust"
-
-for pkg in $RESCUE_PACKAGES; do
-    # 查找旧包的路径并替换为主干最新版
-    old_path=$(find feeds/ -type d -name "$pkg" -prune | head -n 1)
-    if [ -n "$old_path" ]; then
-        rm -rf "$old_path"
-        new_path=$(find /tmp/im_packages/ -type d -name "$pkg" -prune | head -n 1)
-        if [ -n "$new_path" ]; then
-            cp -r "$new_path" "$old_path"
-            echo "组件 $pkg 已热更新至主干最新版"
-        fi
-    fi
-done
-
-rm -rf /tmp/im_packages
-
-# 核心干预：解除 Go 编译器的离线限制
-# 将编译模式从严苛的 vendor 修改为 mod，允许编译器动态补全缺失依赖
-echo "修改 Golang 编译配置，开启缺失依赖动态下载..."
+# (B) 解除严格离线 vendor 模式限制，允许联网下载依赖
 find feeds/ -type f -name "golang-package.mk" -exec sed -i 's/-mod=vendor/-mod=mod/g' {} +
 find feeds/ -type f -name "golang-package.mk" -exec sed -i 's/-mod=readonly/-mod=mod/g' {} +
 
-# 设置全局代理变量确保 Actions 编译环境中模块下载畅通
-export GOPROXY=https://proxy.golang.org,direct
-echo "export GOPROXY=https://proxy.golang.org,direct" >> .profile
+# (C) 在 Makefile 核心编译步骤前，强制注入 go mod download 和 tidy 命令
+# 这将使所有存在依赖 Bug 的组件（如 docker-compose、sing-box 等）在编译时自动联网修复
+find feeds/ -type f -name "golang-package.mk" -exec sed -i 's/$(GO_BIN) build/$(GO_BIN) mod download -e || true ; $(GO_PKG_VARS) $(GO_BIN) mod tidy -e || true ; $(GO_PKG_VARS) $(GO_BIN) build/g' {} +
 # ==========================================
