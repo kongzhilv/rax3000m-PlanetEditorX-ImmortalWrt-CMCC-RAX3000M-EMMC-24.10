@@ -5,16 +5,13 @@
 # https://github.com/P3TERX/Actions-OpenWrt
 
 # ==========================================
-# 1. 核心环境修复 (跨平台编译与上游 Bug 修复)
+# 1. 核心环境修复
 # ==========================================
 rustup target add aarch64-unknown-linux-musl || true
 sed -i 's/find "$1" -type f -name "\\*.orig" -exec rm -f {} \\;/find "$1" -type f -name "\\*.orig" -a ! -name "Cargo.toml.orig" -exec rm -f {} \\;/g' scripts/patch-kernel.sh || true
-echo "# CONFIG_RUST_DOWNLOAD_CI_LLVM is not set" >> .config
-sed -i 's/download-ci-llvm.*/download-ci-llvm = false/g' feeds/packages/lang/rust/Makefile || true
-find feeds/packages/lang/rust/ -type f -name "*.toml" -exec sed -i 's/download-ci-llvm.*/download-ci-llvm = false/g' {} + || true
 
 # ==========================================
-# 2. 软件包预装配置 (你的核心需求)
+# 2. 软件包预装配置
 # ==========================================
 echo "CONFIG_PACKAGE_luci-app-openclash=y" >> .config
 echo "CONFIG_PACKAGE_luci-app-wechatpush=y" >> .config
@@ -22,7 +19,7 @@ echo "CONFIG_PACKAGE_luci-i18n-wechatpush-zh-cn=y" >> .config
 echo "CONFIG_PACKAGE_adguardhome=y" >> .config 
 echo "CONFIG_PACKAGE_luci-app-adguardhome=y" >> .config 
 
-# USB 基础驱动与 5G/4G 上网卡驱动
+# 添加 USB 基础驱动与 5G 网络支持
 echo "CONFIG_PACKAGE_kmod-usb-core=y" >> .config
 echo "CONFIG_PACKAGE_kmod-usb3=y" >> .config
 echo "CONFIG_PACKAGE_kmod-usb-net=y" >> .config
@@ -35,7 +32,7 @@ echo "CONFIG_PACKAGE_kmod-usb-net-huawei-cdc-ncm=y" >> .config
 echo "CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y" >> .config
 
 # ==========================================
-# 3. 固件特定文件处理 (防崩溃版)
+# 3. 固件特定文件处理
 # ==========================================
 rm -f package/mtk/drivers/mt_wifi/files/mt7981-default-eeprom/e2p
 if [ $? -eq 0 ]; then
@@ -52,7 +49,7 @@ else
 fi
 
 # ==========================================
-# 4. 高泛用性修复：防火墙 wan 区域显示为“空”
+# 4. 防火墙 wan 区域显示逻辑修复
 # ==========================================
 mkdir -p package/base-files/files/etc/uci-defaults
 cat <<EOF > package/base-files/files/etc/uci-defaults/99-fix-firewall-wan
@@ -69,7 +66,7 @@ exit 0
 EOF
 
 # ==========================================
-# 5. 终极泛用性修复：5G/USB IPv6 中继自愈守护脚本
+# 5. 5G/USB IPv6 中继自愈守护脚本
 # ==========================================
 mkdir -p package/base-files/files/etc/hotplug.d/iface
 cat <<'EOF' > package/base-files/files/etc/hotplug.d/iface/98-5g-ipv6-guardian
@@ -84,7 +81,7 @@ case "$dev_prefix" in
         reqprefix=$(uci -q get network."$INTERFACE".reqprefix)
         
         if [ "$proto" = "dhcpv6" ] && [ "$reqprefix" != "disabled" ]; then
-            logger -t "IPv6-Guardian" "检测到移动网络/USB接口 $INTERFACE 请求前缀，执行防死锁纠正..."
+            logger -t "IPv6-Guardian" "检测到移动网络接口 $INTERFACE 请求前缀，执行防死锁纠正..."
             uci set network."$INTERFACE".reqprefix='disabled'
             uci commit network
             
@@ -104,37 +101,38 @@ EOF
 chmod +x package/base-files/files/etc/hotplug.d/iface/98-5g-ipv6-guardian
 
 # ==========================================
-# 6. 【全面清扫】物理毁灭所有近期损坏的 Go/Rust 边缘插件
+# 6. 源码级修复：解决 Go 语言包依赖缺失导致编译失败
 # ==========================================
-echo "开始清理上游损坏的插件源码..."
-rm -rf feeds/packages/utils/docker-compose
-rm -rf feeds/packages/utils/filebrowser
-rm -rf feeds/luci/applications/luci-app-filebrowser
-rm -rf feeds/packages/net/sing-box
-rm -rf feeds/luci/applications/luci-app-sing-box
-rm -rf feeds/packages/net/rustdesk-server
-rm -rf feeds/luci/applications/luci-app-rustdesk-server
+echo "开始从 ImmortalWrt Master 分支同步最新源码以修复编译报错..."
 
-# 暴力清除 .config 中的配置残留
-sed -i '/docker-compose/d' .config || true
-sed -i '/filebrowser/d' .config || true
-sed -i '/sing-box/d' .config || true
-sed -i '/rustdesk/d' .config || true
+# 克隆主干仓库以获取已修复的包
+git clone -b master --depth 1 https://github.com/immortalwrt/packages.git /tmp/im_packages
 
-echo "# CONFIG_PACKAGE_docker-compose is not set" >> .config
-echo "# CONFIG_PACKAGE_luci-app-docker-compose is not set" >> .config
-echo "# CONFIG_PACKAGE_filebrowser is not set" >> .config
-echo "# CONFIG_PACKAGE_luci-app-filebrowser is not set" >> .config
-echo "# CONFIG_PACKAGE_sing-box is not set" >> .config
-echo "# CONFIG_PACKAGE_luci-app-sing-box is not set" >> .config
-echo "# CONFIG_PACKAGE_rustdesk-server is not set" >> .config
-echo "# CONFIG_PACKAGE_luci-app-rustdesk-server is not set" >> .config
+# 定义需要进行热修复的组件
+RESCUE_PACKAGES="docker-compose filebrowser sing-box geoview rustdesk-server golang rust"
 
-# 建立固件的本地文件挂载点
-mkdir -p files/usr/bin
+for pkg in $RESCUE_PACKAGES; do
+    # 查找旧包的路径并替换为主干最新版
+    old_path=$(find feeds/ -type d -name "$pkg" -prune | head -n 1)
+    if [ -n "$old_path" ]; then
+        rm -rf "$old_path"
+        new_path=$(find /tmp/im_packages/ -type d -name "$pkg" -prune | head -n 1)
+        if [ -n "$new_path" ]; then
+            cp -r "$new_path" "$old_path"
+            echo "组件 $pkg 已热更新至主干最新版"
+        fi
+    fi
+done
 
-# 保留 docker-compose 的官方二进制版注入 (不参与源码编译，完美避开 Bug)
-echo "正在下载官方 docker-compose 二进制文件..."
-curl -L https://github.com/docker/compose/releases/latest/download/docker-compose-linux-aarch64 -o files/usr/bin/docker-compose
-chmod +x files/usr/bin/docker-compose
+rm -rf /tmp/im_packages
+
+# 核心干预：解除 Go 编译器的离线限制
+# 将编译模式从严苛的 vendor 修改为 mod，允许编译器动态补全缺失依赖
+echo "修改 Golang 编译配置，开启缺失依赖动态下载..."
+find feeds/ -type f -name "golang-package.mk" -exec sed -i 's/-mod=vendor/-mod=mod/g' {} +
+find feeds/ -type f -name "golang-package.mk" -exec sed -i 's/-mod=readonly/-mod=mod/g' {} +
+
+# 设置全局代理变量确保 Actions 编译环境中模块下载畅通
+export GOPROXY=https://proxy.golang.org,direct
+echo "export GOPROXY=https://proxy.golang.org,direct" >> .profile
 # ==========================================
