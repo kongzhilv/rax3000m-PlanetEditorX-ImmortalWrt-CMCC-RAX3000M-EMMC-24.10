@@ -2,10 +2,18 @@
 #
 # 版权所有 (c) 2019-2020 P3TERX <https://p3terx.com>
 # 这是一个自由软件，根据 MIT 许可证授权。
-# https://github.com/P3TERX/Actions-OpenWrt
 
 # ==========================================
-# 1. 核心环境修复 (Rust 跨平台目标及 LLVM 修复)
+# 0. 核心排雷：清理被 GitHub Actions 污染的缓存
+# ==========================================
+echo "正在物理抹除被污染的 Go 依赖缓存..."
+# 强制清除旧的缓存池，迫使 make download 阶段重新拉取健康依赖
+rm -rf ./dl/go-mod-cache
+rm -rf ./dl/*go*.tar.*
+rm -rf ./dl/*rust*.tar.*
+
+# ==========================================
+# 1. 编译环境修复 (Rust 跨平台目标及 LLVM 拦截)
 # ==========================================
 rustup target add aarch64-unknown-linux-musl || true
 sed -i 's/find "$1" -type f -name "\\*.orig" -exec rm -f {} \\;/find "$1" -type f -name "\\*.orig" -a ! -name "Cargo.toml.orig" -exec rm -f {} \\;/g' scripts/patch-kernel.sh || true
@@ -14,15 +22,21 @@ sed -i 's/download-ci-llvm.*/download-ci-llvm = false/g' feeds/packages/lang/rus
 find feeds/packages/lang/rust/ -type f -name "*.toml" -exec sed -i 's/download-ci-llvm.*/download-ci-llvm = false/g' {} + || true
 
 # ==========================================
-# 2. 软件包预装配置
+# 2. 软件包预装配置 (你要的包全部在这里，彻底救回)
 # ==========================================
 echo "CONFIG_PACKAGE_luci-app-openclash=y" >> .config
 echo "CONFIG_PACKAGE_luci-app-wechatpush=y" >> .config
 echo "CONFIG_PACKAGE_luci-i18n-wechatpush-zh-cn=y" >> .config
+
+# 明确选中之前受缓存污染报错的包，让系统正常编译它们
 echo "CONFIG_PACKAGE_adguardhome=y" >> .config 
 echo "CONFIG_PACKAGE_luci-app-adguardhome=y" >> .config 
+echo "CONFIG_PACKAGE_docker-compose=y" >> .config
+echo "CONFIG_PACKAGE_filebrowser=y" >> .config
+echo "CONFIG_PACKAGE_luci-app-filebrowser=y" >> .config
+echo "CONFIG_PACKAGE_sing-box=y" >> .config
 
-# 添加 USB 基础驱动与 5G 网络支持
+# USB 基础驱动与 5G/4G 拨号模块网卡驱动
 echo "CONFIG_PACKAGE_kmod-usb-core=y" >> .config
 echo "CONFIG_PACKAGE_kmod-usb3=y" >> .config
 echo "CONFIG_PACKAGE_kmod-usb-net=y" >> .config
@@ -35,7 +49,7 @@ echo "CONFIG_PACKAGE_kmod-usb-net-huawei-cdc-ncm=y" >> .config
 echo "CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y" >> .config
 
 # ==========================================
-# 3. 固件特定文件处理
+# 3. 固件特定文件处理 (MT7981 EEPROM)
 # ==========================================
 rm -f package/mtk/drivers/mt_wifi/files/mt7981-default-eeprom/e2p
 if [ $? -eq 0 ]; then
@@ -46,13 +60,13 @@ EEPROM_FILE="package/mtk/drivers/mt_wifi/files/mt7981-default-eeprom/MT7981_iPAi
 if [ -f "$EEPROM_FILE" ]; then
   mkdir -p files/lib/firmware
   ln -sf /lib/firmware/MT7981_iPAiLNA_EEPROM.bin files/lib/firmware/e2p
-  echo "符号链接已创建"
+  echo "EEPROM 符号链接已创建"
 else
   echo "警告：$EEPROM_FILE 不存在，跳过符号链接创建"
 fi
 
 # ==========================================
-# 4. 防火墙 wan 区域显示逻辑修复
+# 4. 防火墙 UI 显示状态修复
 # ==========================================
 mkdir -p package/base-files/files/etc/uci-defaults
 cat <<EOF > package/base-files/files/etc/uci-defaults/99-fix-firewall-wan
@@ -69,7 +83,7 @@ exit 0
 EOF
 
 # ==========================================
-# 5. 5G/USB IPv6 中继自愈守护脚本
+# 5. 蜂窝网络/USB 共享 IPv6 中继自愈守护进程
 # ==========================================
 mkdir -p package/base-files/files/etc/hotplug.d/iface
 cat <<'EOF' > package/base-files/files/etc/hotplug.d/iface/98-5g-ipv6-guardian
@@ -84,7 +98,7 @@ case "$dev_prefix" in
         reqprefix=$(uci -q get network."$INTERFACE".reqprefix)
         
         if [ "$proto" = "dhcpv6" ] && [ "$reqprefix" != "disabled" ]; then
-            logger -t "IPv6-Guardian" "检测到移动网络接口 $INTERFACE 请求前缀，执行防死锁纠正..."
+            logger -t "IPv6-Guardian" "检测到外接物理网络接口 $INTERFACE 发生 PD 锁死风险，执行配置阻断..."
             uci set network."$INTERFACE".reqprefix='disabled'
             uci commit network
             
@@ -94,7 +108,7 @@ case "$dev_prefix" in
             exit 0
         fi
 
-        logger -t "IPv6-Guardian" "刷新 odhcpd 中继服务以适配 $INTERFACE..."
+        logger -t "IPv6-Guardian" "下发热插拔指令，强制 odhcpd 服务重载 $INTERFACE 中继链路..."
         sleep 5
         /etc/init.d/odhcpd restart
         ;;
@@ -104,18 +118,9 @@ EOF
 chmod +x package/base-files/files/etc/hotplug.d/iface/98-5g-ipv6-guardian
 
 # ==========================================
-# 6. 【核心方案】Go 编译器源码级动态依赖修复
+# 6. Go 编译器网络环境双重保障
 # ==========================================
-echo "正在注入 Go 编译器动态修复逻辑..."
-
-# (A) 解除断网编译限制，切换为国内代理加速
-find feeds/ -type f -name "golang-values.mk" -exec sed -i 's/GOPROXY=off/GOPROXY=https:\/\/goproxy.cn,direct/g' {} +
-
-# (B) 解除严格离线 vendor 模式限制，允许联网下载依赖
+# 强制解除严苛的离线编译限制，确保 Go 编译器遇到包缺失时能自动向公网请求补齐
+find feeds/ -type f -name "golang-package.mk" -exec sed -i 's/GOPROXY=off/GOPROXY=https:\/\/goproxy.io,direct/g' {} +
 find feeds/ -type f -name "golang-package.mk" -exec sed -i 's/-mod=vendor/-mod=mod/g' {} +
 find feeds/ -type f -name "golang-package.mk" -exec sed -i 's/-mod=readonly/-mod=mod/g' {} +
-
-# (C) 在 Makefile 核心编译步骤前，强制注入 go mod download 和 tidy 命令
-# 这将使所有存在依赖 Bug 的组件（如 docker-compose、sing-box 等）在编译时自动联网修复
-find feeds/ -type f -name "golang-package.mk" -exec sed -i 's/$(GO_BIN) build/$(GO_BIN) mod download -e || true ; $(GO_PKG_VARS) $(GO_BIN) mod tidy -e || true ; $(GO_PKG_VARS) $(GO_BIN) build/g' {} +
-# ==========================================
