@@ -7,7 +7,6 @@
 # 0. 核心排雷：清理被 GitHub Actions 污染的缓存
 # ==========================================
 echo "正在物理抹除被污染的 Go 依赖缓存..."
-# 强制清除旧的缓存池，迫使 make download 阶段重新拉取健康依赖
 rm -rf ./dl/go-mod-cache
 rm -rf ./dl/*go*.tar.*
 rm -rf ./dl/*rust*.tar.*
@@ -22,19 +21,25 @@ sed -i 's/download-ci-llvm.*/download-ci-llvm = false/g' feeds/packages/lang/rus
 find feeds/packages/lang/rust/ -type f -name "*.toml" -exec sed -i 's/download-ci-llvm.*/download-ci-llvm = false/g' {} + || true
 
 # ==========================================
-# 2. 软件包预装配置 (你要的包全部在这里，彻底救回)
+# 2. 软件包预装配置 (所有包已成功编译，解决最后打包冲突)
 # ==========================================
 echo "CONFIG_PACKAGE_luci-app-openclash=y" >> .config
 echo "CONFIG_PACKAGE_luci-app-wechatpush=y" >> .config
 echo "CONFIG_PACKAGE_luci-i18n-wechatpush-zh-cn=y" >> .config
 
-# 明确选中之前受缓存污染报错的包，让系统正常编译它们
 echo "CONFIG_PACKAGE_adguardhome=y" >> .config 
 echo "CONFIG_PACKAGE_luci-app-adguardhome=y" >> .config 
 echo "CONFIG_PACKAGE_docker-compose=y" >> .config
 echo "CONFIG_PACKAGE_filebrowser=y" >> .config
 echo "CONFIG_PACKAGE_luci-app-filebrowser=y" >> .config
 echo "CONFIG_PACKAGE_sing-box=y" >> .config
+
+# 【临门一脚：解决 Copilot 发现的冲突报错】
+# 物理删除导致固件打包冲突的 filebrowser-go 变体及其汉化包
+rm -rf feeds/luci/applications/luci-app-filebrowser-go
+sed -i '/filebrowser-go/d' .config || true
+echo "# CONFIG_PACKAGE_luci-app-filebrowser-go is not set" >> .config
+echo "# CONFIG_PACKAGE_luci-i18n-filebrowser-go-zh-cn is not set" >> .config
 
 # USB 基础驱动与 5G/4G 拨号模块网卡驱动
 echo "CONFIG_PACKAGE_kmod-usb-core=y" >> .config
@@ -120,7 +125,6 @@ chmod +x package/base-files/files/etc/hotplug.d/iface/98-5g-ipv6-guardian
 # ==========================================
 # 6. Go 编译器网络环境双重保障
 # ==========================================
-# 强制解除严苛的离线编译限制，确保 Go 编译器遇到包缺失时能自动向公网请求补齐
 find feeds/ -type f -name "golang-package.mk" -exec sed -i 's/GOPROXY=off/GOPROXY=https:\/\/goproxy.io,direct/g' {} +
 find feeds/ -type f -name "golang-package.mk" -exec sed -i 's/-mod=vendor/-mod=mod/g' {} +
 find feeds/ -type f -name "golang-package.mk" -exec sed -i 's/-mod=readonly/-mod=mod/g' {} +
